@@ -522,7 +522,12 @@ where
         // add zenith.signal file
         let mut zenith_signal = String::new();
         if self.prev_record_lsn == Lsn(0) {
-            if self.lsn == self.timeline.get_ancestor_lsn() {
+            // FIXME: this should only be true if we are in a branch OR detached branch
+            //
+            // Rationale: before the first compute starts for a new branch, we will not have the
+            // prev lsn. After a compute has been shut down, and we've caught up to safekeepers,
+            // then we will have the prev lsn for the next read/write compute startup.
+            if true {
                 write!(zenith_signal, "PREV LSN: none")?;
             } else {
                 write!(zenith_signal, "PREV LSN: invalid")?;
