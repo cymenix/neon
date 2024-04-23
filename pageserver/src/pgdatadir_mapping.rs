@@ -395,12 +395,15 @@ impl Timeline {
     /// so it's not well defined which LSN you get if there were multiple commits
     /// "in flight" at that point in time.
     ///
+    #[tracing::instrument(skip_all, fields(%search_timestamp))]
     pub(crate) async fn find_lsn_for_timestamp(
         &self,
         search_timestamp: TimestampTz,
         cancel: &CancellationToken,
         ctx: &RequestContext,
     ) -> Result<LsnForTimestamp, PageReconstructError> {
+        let started_at = std::time::Instant::now();
+
         let gc_cutoff_lsn_guard = self.get_latest_gc_cutoff_lsn();
         // We use this method to figure out the branching LSN for the new branch, but the
         // GC cutoff could be before the branching point and we cannot create a new branch
@@ -416,12 +419,18 @@ impl Timeline {
 
         let mut found_smaller = false;
         let mut found_larger = false;
+        let mut stats = MapTimestampStats::default();
+
         while low < high {
             if cancel.is_cancelled() {
+                tracing::info!(?stats, "exiting on cancel");
                 return Err(PageReconstructError::Cancelled);
             }
             // cannot overflow, high and low are both smaller than u64::MAX / 2
             let mid = (high + low) / 2;
+
+            let started_at = std::time::Instant::now();
+            let mut round_stats = MapTimestampStats::default();
 
             let cmp = self
                 .is_latest_commit_timestamp_ge_than(
@@ -429,16 +438,31 @@ impl Timeline {
                     Lsn(mid * 8),
                     &mut found_smaller,
                     &mut found_larger,
+                    &mut round_stats,
                     ctx,
                 )
-                .await?;
+                .await
+                .inspect_err(|_| {
+                    stats += &round_stats;
+                    tracing::info!(?round_stats, ?stats, "exiting after error");
+                })?;
 
+            let elapsed = started_at.elapsed();
+
+            if elapsed > std::time::Duration::from_secs(1) {
+                tracing::info!(high = %Lsn(high * 8), low = %Lsn((low - 1)*8), ?round_stats, ?stats, "slow round");
+            }
+
+            tracing::debug!(mid = %Lsn(high * 8), cmp, "round result");
             if cmp {
                 high = mid;
             } else {
                 low = mid + 1;
             }
+
+            stats += &round_stats;
         }
+
         // If `found_smaller == true`, `low = t + 1` where `t` is the target LSN,
         // so the LSN of the last commit record before or at `search_timestamp`.
         // Remove one from `low` to get `t`.
@@ -448,6 +472,11 @@ impl Timeline {
         // include physical changes from later commits that will be marked
         // as aborted, and will need to be vacuumed away.
         let commit_lsn = Lsn((low - 1) * 8);
+
+        let elapsed = started_at.elapsed();
+
+        tracing::info!(%commit_lsn, elapsed_ms=%elapsed.as_millis(), ?stats, "completed");
+
         match (found_smaller, found_larger) {
             (false, false) => {
                 // This can happen if no commit records have been processed yet, e.g.
@@ -481,9 +510,10 @@ impl Timeline {
         probe_lsn: Lsn,
         found_smaller: &mut bool,
         found_larger: &mut bool,
+        stats: &mut MapTimestampStats,
         ctx: &RequestContext,
     ) -> Result<bool, PageReconstructError> {
-        self.map_all_timestamps(probe_lsn, ctx, |timestamp| {
+        self.map_all_timestamps(probe_lsn, stats, ctx, |timestamp| {
             if timestamp >= search_timestamp {
                 *found_larger = true;
                 return ControlFlow::Break(true);
@@ -503,8 +533,12 @@ impl Timeline {
         probe_lsn: Lsn,
         ctx: &RequestContext,
     ) -> Result<Option<TimestampTz>, PageReconstructError> {
+        let mut stats = MapTimestampStats::default();
+
+        let started_at = std::time::Instant::now();
+
         let mut max: Option<TimestampTz> = None;
-        self.map_all_timestamps(probe_lsn, ctx, |timestamp| {
+        self.map_all_timestamps(probe_lsn, &mut stats, ctx, |timestamp| {
             if let Some(max_prev) = max {
                 max = Some(max_prev.max(timestamp));
             } else {
@@ -513,6 +547,12 @@ impl Timeline {
             ControlFlow::Continue(())
         })
         .await?;
+
+        let elapsed = started_at.elapsed();
+
+        if elapsed > std::time::Duration::from_secs(1) {
+            tracing::info!(?stats, "slow get_timestamp_of_lsn");
+        }
 
         Ok(max)
     }
@@ -524,20 +564,30 @@ impl Timeline {
     async fn map_all_timestamps<T: Default>(
         &self,
         probe_lsn: Lsn,
+        stats: &mut MapTimestampStats,
         ctx: &RequestContext,
         mut f: impl FnMut(TimestampTz) -> ControlFlow<T>,
     ) -> Result<T, PageReconstructError> {
-        for segno in self
+        let segments = self
             .list_slru_segments(SlruKind::Clog, Version::Lsn(probe_lsn), ctx)
-            .await?
-        {
+            .timed(&mut stats.clog_listing_time)
+            .await?;
+
+        stats.clog_segments += segments.len();
+
+        for segno in segments {
             let nblocks = self
                 .get_slru_segment_size(SlruKind::Clog, segno, Version::Lsn(probe_lsn), ctx)
+                .timed(&mut stats.segment_size_time)
                 .await?;
+
             for blknum in (0..nblocks).rev() {
                 let clog_page = self
                     .get_slru_page_at_lsn(SlruKind::Clog, segno, blknum, probe_lsn, ctx)
+                    .timed(&mut stats.slru_page_time)
                     .await?;
+
+                stats.slru_pages += 1;
 
                 if clog_page.len() == BLCKSZ as usize + 8 {
                     let mut timestamp_bytes = [0u8; 8];
@@ -548,6 +598,8 @@ impl Timeline {
                         ControlFlow::Break(b) => return Ok(b),
                         ControlFlow::Continue(()) => (),
                     }
+                } else {
+                    stats.non_timestamped_blocks += 1;
                 }
             }
         }
@@ -852,6 +904,41 @@ impl Timeline {
     pub fn remove_cached_rel_size(&self, tag: &RelTag) {
         let mut rel_size_cache = self.rel_size_cache.write().unwrap();
         rel_size_cache.map.remove(tag);
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct MapTimestampStats {
+    clog_listing_time: std::time::Duration,
+    clog_segments: usize,
+    segment_size_time: std::time::Duration,
+    slru_pages: usize,
+    slru_page_time: std::time::Duration,
+    non_timestamped_blocks: usize,
+}
+
+impl std::ops::AddAssign<&Self> for MapTimestampStats {
+    fn add_assign(&mut self, rhs: &Self) {
+        self.clog_listing_time += rhs.clog_listing_time;
+        self.clog_segments += rhs.clog_segments;
+        self.segment_size_time += rhs.segment_size_time;
+        self.slru_pages += rhs.slru_pages;
+        self.slru_page_time += rhs.slru_page_time;
+        self.non_timestamped_blocks += rhs.non_timestamped_blocks;
+    }
+}
+
+trait FutureExt: std::future::Future {
+    async fn timed(self, sum: &mut std::time::Duration) -> Self::Output;
+}
+
+impl<F: std::future::Future> FutureExt for F {
+    async fn timed(self, sum: &mut std::time::Duration) -> Self::Output {
+        let started_at = std::time::Instant::now();
+        let res = self.await;
+        *sum += started_at.elapsed();
+
+        res
     }
 }
 
