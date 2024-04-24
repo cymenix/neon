@@ -4020,7 +4020,7 @@ def check_restored_datadir_content(test_output_dir: Path, env: NeonEnv, endpoint
         ]
 
     # check that file sets are equal
-    #assert pgdata_files == restored_files
+    # assert pgdata_files == restored_files
 
     # compare content of the files
     # filecmp returns (match, mismatch, error) lists
@@ -4043,7 +4043,7 @@ def check_restored_datadir_content(test_output_dir: Path, env: NeonEnv, endpoint
             cmd = f"diff {f1}.hex {f2}.hex"
             subprocess.run([cmd], stdout=stdout_f, shell=True)
 
-    #assert (mismatch, error) == ([], [])
+    # assert (mismatch, error) == ([], [])
 
 
 def logical_replication_sync(subscriber: VanillaPostgres, publisher: Endpoint) -> Lsn:
