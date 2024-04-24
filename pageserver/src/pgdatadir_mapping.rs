@@ -453,7 +453,7 @@ impl Timeline {
                 tracing::info!(high = %Lsn(high * 8), low = %Lsn((low - 1)*8), ?round_stats, ?stats, "slow round");
             }
 
-            tracing::debug!(mid = %Lsn(high * 8), cmp, "round result");
+            tracing::debug!(mid = %Lsn(mid * 8), cmp, "round result");
             if cmp {
                 high = mid;
             } else {
