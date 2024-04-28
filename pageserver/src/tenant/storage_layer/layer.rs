@@ -23,7 +23,7 @@ use crate::tenant::timeline::GetVectoredError;
 use crate::tenant::{remote_timeline_client::LayerFileMetadata, Timeline};
 
 use super::delta_layer::{self, DeltaEntry};
-use super::image_layer;
+use super::image_layer::{self, ImageEntry};
 use super::{
     AsLayerDesc, LayerAccessStats, LayerAccessStatsReset, LayerFileName, PersistentLayerDesc,
     ValueReconstructResult, ValueReconstructState, ValuesReconstructState,
@@ -1825,13 +1825,12 @@ impl ResidentLayer {
         use LayerKind::*;
 
         let owner = &self.owner.0;
+        owner
+            .access_stats
+            .record_access(LayerAccessKind::KeyIter, ctx);
 
         match self.downloaded.get(owner, ctx).await? {
             Delta(ref d) => {
-                owner
-                    .access_stats
-                    .record_access(LayerAccessKind::KeyIter, ctx);
-
                 // this is valid because the DownloadedLayer::kind is a OnceCell, not a
                 // Mutex<OnceCell>, so we cannot go and deinitialize the value with OnceCell::take
                 // while it's being held.
@@ -1840,6 +1839,27 @@ impl ResidentLayer {
                     .with_context(|| format!("Layer index is corrupted for {self}"))
             }
             Image(_) => anyhow::bail!(format!("cannot load_keys on a image layer {self}")),
+        }
+    }
+
+    /// Loads all keys stored in the layer. Returns key, lsn and value size.
+    #[tracing::instrument(level = tracing::Level::DEBUG, skip_all, fields(layer=%self))]
+    pub(crate) async fn load_image_keys<'a>(
+        &'a self,
+        ctx: &RequestContext,
+    ) -> anyhow::Result<Vec<ImageEntry<'a>>> {
+        use LayerKind::*;
+
+        let owner = &self.owner.0;
+        owner
+            .access_stats
+            .record_access(LayerAccessKind::KeyIter, ctx);
+
+        match self.downloaded.get(owner, ctx).await? {
+            Delta(_) => anyhow::bail!(format!("cannot load_image_keys on a delta layer {self}")),
+            Image(i) => image_layer::ImageLayerInner::load_keys(i, ctx)
+                .await
+                .with_context(|| format!("Layer index is corrupted for {self}")),
         }
     }
 

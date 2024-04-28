@@ -28,7 +28,7 @@ use crate::context::{PageContentKind, RequestContext, RequestContextBuilder};
 use crate::page_cache::{self, FileId, PAGE_SZ};
 use crate::repository::{Key, Value, KEY_SIZE};
 use crate::tenant::blob_io::BlobWriter;
-use crate::tenant::block_io::{BlockBuf, BlockReader, FileBlockReader};
+use crate::tenant::block_io::{BlockBuf, BlockCursor, BlockLease, BlockReader, FileBlockReader};
 use crate::tenant::disk_btree::{DiskBtreeBuilder, DiskBtreeReader, VisitDirection};
 use crate::tenant::storage_layer::{
     LayerAccessStats, ValueReconstructResult, ValueReconstructState,
@@ -65,6 +65,7 @@ use utils::{
     lsn::Lsn,
 };
 
+use super::delta_layer::BlobRef;
 use super::filename::ImageFileName;
 use super::{AsLayerDesc, Layer, PersistentLayerDesc, ResidentLayer, ValuesReconstructState};
 
@@ -172,6 +173,47 @@ impl std::fmt::Debug for ImageLayerInner {
     }
 }
 
+pub struct ImageEntry<'a> {
+    pub key: Key,
+    /// Reference to the on-disk value
+    pub val: ValueRef<'a>,
+}
+
+/// Reference to an on-disk value
+pub struct ValueRef<'a> {
+    blob_ref: BlobRef,
+    reader: BlockCursor<'a>,
+}
+
+pub(crate) struct ImageAdapter<T>(T);
+
+impl<T: AsRef<ImageLayerInner>> ImageAdapter<T> {
+    pub(crate) async fn read_blk(
+        &self,
+        blknum: u32,
+        ctx: &RequestContext,
+    ) -> Result<BlockLease, std::io::Error> {
+        let block_reader = FileBlockReader::new(&self.0.as_ref().file, self.0.as_ref().file_id);
+        block_reader.read_blk(blknum, ctx).await
+    }
+}
+
+impl<'a> ValueRef<'a> {
+    /// Loads the value from disk
+    pub async fn load(&self, ctx: &RequestContext) -> Result<Bytes> {
+        // theoretically we *could* record an access time for each, but it does not really matter
+        let buf = self.reader.read_blob(self.blob_ref.pos(), ctx).await?;
+        let val = Bytes::from(buf);
+        Ok(val)
+    }
+}
+
+impl AsRef<ImageLayerInner> for ImageLayerInner {
+    fn as_ref(&self) -> &ImageLayerInner {
+        self
+    }
+}
+
 impl ImageLayerInner {
     pub(super) async fn dump(&self, ctx: &RequestContext) -> anyhow::Result<()> {
         let block_reader = FileBlockReader::new(&self.file, self.file_id);
@@ -196,6 +238,43 @@ impl ImageLayerInner {
             .await?;
 
         Ok(())
+    }
+
+    pub(super) async fn load_keys<'a>(
+        &'a self,
+        ctx: &RequestContext,
+    ) -> Result<Vec<ImageEntry<'a>>> {
+        let block_reader = FileBlockReader::new(&self.file, self.file_id);
+        let tree_reader = DiskBtreeReader::<_, KEY_SIZE>::new(
+            self.index_start_blk,
+            self.index_root_blk,
+            block_reader,
+        );
+
+        let mut all_keys: Vec<ImageEntry<'_>> = Vec::new();
+
+        tree_reader
+            .visit(
+                &[0u8; KEY_SIZE],
+                VisitDirection::Forwards,
+                |key, offset| {
+                    let key = Key::from_slice(key);
+                    let val_ref = ValueRef {
+                        blob_ref: BlobRef::new(offset, false),
+                        reader: BlockCursor::new(
+                            crate::tenant::block_io::BlockReaderRef::ImageAdapter(ImageAdapter(
+                                self,
+                            )),
+                        ),
+                    };
+                    all_keys.push(ImageEntry { key, val: val_ref });
+                    true
+                },
+                ctx,
+            )
+            .await?;
+
+        Ok(all_keys)
     }
 }
 

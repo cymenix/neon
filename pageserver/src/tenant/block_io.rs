@@ -4,6 +4,7 @@
 
 use super::ephemeral_file::EphemeralFile;
 use super::storage_layer::delta_layer::{Adapter, DeltaLayerInner};
+use super::storage_layer::image_layer::{ImageAdapter, ImageLayerInner};
 use crate::context::RequestContext;
 use crate::page_cache::{self, FileId, PageReadGuard, PageWriteGuard, ReadBufResult, PAGE_SZ};
 use crate::virtual_file::VirtualFile;
@@ -81,6 +82,7 @@ pub(crate) enum BlockReaderRef<'a> {
     FileBlockReader(&'a FileBlockReader<'a>),
     EphemeralFile(&'a EphemeralFile),
     Adapter(Adapter<&'a DeltaLayerInner>),
+    ImageAdapter(ImageAdapter<&'a ImageLayerInner>),
     #[cfg(test)]
     TestDisk(&'a super::disk_btree::tests::TestDisk),
     #[cfg(test)]
@@ -99,6 +101,7 @@ impl<'a> BlockReaderRef<'a> {
             FileBlockReader(r) => r.read_blk(blknum, ctx).await,
             EphemeralFile(r) => r.read_blk(blknum, ctx).await,
             Adapter(r) => r.read_blk(blknum, ctx).await,
+            ImageAdapter(r) => r.read_blk(blknum, ctx).await,
             #[cfg(test)]
             TestDisk(r) => r.read_blk(blknum),
             #[cfg(test)]
