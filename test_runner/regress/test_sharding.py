@@ -177,7 +177,18 @@ def test_sharding_split_unsharded(
     env.storage_controller.consistency_check()
 
 
-def test_sharding_split_compaction(neon_env_builder: NeonEnvBuilder):
+@pytest.mark.parametrize(
+    "failpoint",
+    [
+        None
+        # FIXME: layer rewriting currently leaves a state that init barfs on, after
+        # the generations-in-paths change
+        # "compact-shard-ancestors-localonly-kill",
+        # "compact-shard-ancestors-enqueued-kill",
+        # "compact-shard-ancestors-persistent-kill",
+    ],
+)
+def test_sharding_split_compaction(neon_env_builder: NeonEnvBuilder, failpoint: Optional[str]):
     """
     Test that after a split, we clean up parent layer data in the child shards via compaction.
     """
@@ -233,6 +244,77 @@ def test_sharding_split_compaction(neon_env_builder: NeonEnvBuilder):
 
         # Physical size should shrink because some layers have been dropped
         assert detail_after["current_physical_size"] < detail_before["current_physical_size"]
+
+    # Compaction shouldn't make anything unreadable
+    workload.validate()
+
+    # Force a generation increase: layer rewrites are a long-term thing and only happen after
+    # the generation has increased.
+    env.pageserver.stop()
+    env.pageserver.start()
+
+    # Cleanup part 2: once layers are outside the PITR window, they will be rewritten if they are partially redundant
+    env.storage_controller.pageserver_api().set_tenant_config(tenant_id, {"pitr_interval": "0s"})
+    for shard in shards:
+        ps = env.get_tenant_pageserver(shard)
+
+        # Apply failpoints for the layer-rewriting phase: this is the area of code that has sensitive behavior
+        # across restarts, as we will have local layer files that temporarily disagree with the remote metadata
+        # for the same local layer file name.
+        if failpoint is not None:
+            ps.http_client().configure_failpoints((failpoint, "return(1)"))
+
+        # Do a GC to update gc_info (compaction uses this to decide whether a layer is to be rewritten)
+        ps.http_client().timeline_gc(shard, timeline_id, gc_horizon=None)
+
+        # We will compare stats before + after compaction
+        detail_before = ps.http_client().timeline_detail(shard, timeline_id)
+
+        # Invoke compaction: this should rewrite layers that are behind the pitr horizon
+        try:
+            ps.http_client().timeline_compact(shard, timeline_id)
+        except requests.ConnectionError as e:
+            if failpoint is None:
+                raise e
+            else:
+                log.info(f"Compaction failed (failpoint={failpoint}): {e}")
+
+            if failpoint in (
+                "compact-shard-ancestors-localonly-kill",
+                "compact-shard-ancestors-enqueued-kill",
+            ):
+                # If we left local files that don't match remote metadata, we expect warnings on next startup
+                env.pageserver.allowed_errors.append(
+                    ".*removing local file .+ because it has unexpected length.*"
+                )
+
+            # Post-failpoint: we check that the pageserver comes back online happily.
+            env.pageserver.running = False
+            env.pageserver.start()
+        else:
+            assert failpoint is None  # We shouldn't reach success path if a failpoint was set
+
+            detail_after = ps.http_client().timeline_detail(shard, timeline_id)
+
+            # Physical size should shrink because layers are smaller
+            assert detail_after["current_physical_size"] < detail_before["current_physical_size"]
+
+    # Validate size statistics
+    for shard in shards:
+        ps = env.get_tenant_pageserver(shard)
+        timeline_info = ps.http_client().timeline_detail(shard, timeline_id)
+        reported_size = timeline_info["current_physical_size"]
+        layer_paths = ps.list_layers(shard, timeline_id)
+        measured_size = 0
+        for p in layer_paths:
+            abs_path = ps.timeline_dir(shard, timeline_id) / p
+            measured_size += os.stat(abs_path).st_size
+
+        log.info(
+            f"shard {shard} reported size {reported_size}, meausred size {measured_size} ({len(layer_paths)} layers)"
+        )
+
+        assert measured_size == reported_size
 
     # Compaction shouldn't make anything unreadable
     workload.validate()
