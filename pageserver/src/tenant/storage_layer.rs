@@ -119,6 +119,7 @@ pub(crate) struct ValuesReconstructState {
 
     keys_done: KeySpaceRandomAccum,
     layers_visited: u32,
+    delta_file_kb_visited: usize,
 }
 
 impl ValuesReconstructState {
@@ -127,6 +128,7 @@ impl ValuesReconstructState {
             keys: HashMap::new(),
             keys_done: KeySpaceRandomAccum::new(),
             layers_visited: 0,
+            delta_file_kb_visited: 0,
         }
     }
 
@@ -140,8 +142,17 @@ impl ValuesReconstructState {
         }
     }
 
-    pub(crate) fn on_layer_visited(&mut self) {
+    pub(crate) fn on_layer_visited(&mut self, layer: &ReadableLayer) {
         self.layers_visited += 1;
+        if let ReadableLayer::PersistentLayer(layer) = layer {
+            if layer.layer_desc().is_delta() {
+                self.delta_file_kb_visited += layer.layer_desc().file_size as usize / 1024;
+            }
+        }
+    }
+
+    pub(crate) fn get_vectored_access_delta_file_size_kb(&self) -> usize {
+        self.delta_file_kb_visited
     }
 
     pub(crate) fn get_layers_visited(&self) -> u32 {

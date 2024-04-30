@@ -101,7 +101,7 @@ pub struct RequestContext {
     page_content_kind: PageContentKind,
     pub micros_spent_throttled: optional_counter::MicroSecondsCounterU32,
     /// Total number of kilobytes of layer files processed in this request.
-    pub vectored_access_file_size_kb: AtomicUsize,
+    pub vectored_access_delta_file_size_kb: AtomicUsize,
 }
 
 /// The kind of access to the page cache.
@@ -158,6 +158,7 @@ impl RequestContextBuilder {
                 access_stats_behavior: AccessStatsBehavior::Update,
                 page_content_kind: PageContentKind::Unknown,
                 micros_spent_throttled: Default::default(),
+                vectored_access_delta_file_size_kb: AtomicUsize::new(0),
             },
         }
     }
@@ -172,6 +173,7 @@ impl RequestContextBuilder {
                 access_stats_behavior: original.access_stats_behavior,
                 page_content_kind: original.page_content_kind,
                 micros_spent_throttled: Default::default(),
+                vectored_access_delta_file_size_kb: AtomicUsize::new(0),
             },
         }
     }

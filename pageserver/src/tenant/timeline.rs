@@ -1198,6 +1198,10 @@ impl Timeline {
             .start_timer();
         let mut results: BTreeMap<Key, Result<Bytes, PageReconstructError>> = BTreeMap::new();
         let layers_visited = reconstruct_state.get_layers_visited();
+        ctx.vectored_access_delta_file_size_kb.fetch_add(
+            reconstruct_state.get_vectored_access_delta_file_size_kb(),
+            AtomicOrdering::SeqCst,
+        );
         for (key, res) in reconstruct_state.keys {
             match res {
                 Err(err) => {
@@ -3421,7 +3425,7 @@ impl Timeline {
                 unmapped_keyspace = keyspace_to_read;
                 cont_lsn = next_cont_lsn;
 
-                reconstruct_state.on_layer_visited();
+                reconstruct_state.on_layer_visited(&layer_to_read);
             } else {
                 break;
             }
@@ -4194,7 +4198,7 @@ impl Timeline {
 
             if compact_metadata {
                 let total_kb_reads_begin = ctx
-                    .vectored_access_file_size_kb
+                    .vectored_access_delta_file_size_kb
                     .load(AtomicOrdering::SeqCst);
                 let data = self
                     .get_vectored_impl(
@@ -4202,11 +4206,10 @@ impl Timeline {
                         lsn,
                         ValuesReconstructState::default(),
                         ctx,
-                        true,
                     )
                     .await?;
                 let total_kb_reads = ctx
-                    .vectored_access_file_size_kb
+                    .vectored_access_delta_file_size_kb
                     .load(AtomicOrdering::SeqCst)
                     - total_kb_reads_begin;
                 if total_kb_reads <= 16000
@@ -4223,11 +4226,11 @@ impl Timeline {
                         continue;
                     }
                     // No need to handle sharding b/c metadata keys are always on the 0-th shard.
-                    image_layer_writer.put_image(k, v).await?; // TODO: split image layers to avoid too large layer files
+                    image_layer_writer.put_image(k, v, ctx).await?; // TODO: split image layers to avoid too large layer files
                 }
                 start = img_range.end;
                 if has_keys {
-                    let image_layer = image_layer_writer.finish(self).await?;
+                    let image_layer = image_layer_writer.finish(self, ctx).await?;
                     image_layers.push(image_layer);
                 } else {
                     tracing::debug!("no data in range {}-{}", img_range.start, img_range.end);
@@ -4295,13 +4298,13 @@ impl Timeline {
                                     }
                                 };
 
-                            // Write all the keys we just read into our new image layer.
-                            image_layer_writer.put_image(img_key, img, ctx).await?;
-                            wrote_keys = true;
+                                // Write all the keys we just read into our new image layer.
+                                image_layer_writer.put_image(img_key, img, ctx).await?;
+                                wrote_keys = true;
+                            }
                         }
                     }
                 }
-            }
 
                 if wrote_keys {
                     // Normal path: we have written some data into the new image layer for this
