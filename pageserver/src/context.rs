@@ -86,6 +86,8 @@
 //! [`RequestContext`] argument. Functions in the middle of the call chain
 //! only need to pass it on.
 
+use std::sync::atomic::AtomicUsize;
+
 use crate::task_mgr::TaskKind;
 
 pub(crate) mod optional_counter;
@@ -98,6 +100,8 @@ pub struct RequestContext {
     access_stats_behavior: AccessStatsBehavior,
     page_content_kind: PageContentKind,
     pub micros_spent_throttled: optional_counter::MicroSecondsCounterU32,
+    /// Total number of kilobytes of layer files processed in this request.
+    pub vectored_access_file_size_kb: AtomicUsize,
 }
 
 /// The kind of access to the page cache.
