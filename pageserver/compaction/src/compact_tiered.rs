@@ -548,7 +548,8 @@ where
                 // All done!
                 break;
             }
-            if let Some(key_range) = window.choose_next_delta(self.target_file_size, !all_in_window)
+            if let Some((key_range, _file_size)) =
+                window.choose_next_delta(self.target_file_size, !all_in_window)
             {
                 let batch_layers: Vec<LayerId> = job
                     .input_layers
@@ -806,28 +807,31 @@ where
             .partition_point(|elem| elem.accum_size - self.splitoff_size < target_size)
     }
 
-    fn pop(&mut self) {
+    fn pop(&mut self) -> u64 {
         let first = self.elems.pop_front().unwrap();
+        let created_size = first.accum_size - self.splitoff_size;
         self.splitoff_size = first.accum_size;
 
         self.splitoff_key = Some(first.last_key);
+
+        created_size
     }
 
     // the difference between delta and image is that an image covers
     // any unused keyspace before and after, while a delta tries to
     // minimize that. TODO: difference not implemented
-    fn pop_delta(&mut self) -> Range<K> {
+    fn pop_delta(&mut self) -> (Range<K>, u64) {
         let first = self.elems.front().unwrap();
         let key_range = first.start_key..first.last_key.next();
 
-        self.pop();
-        key_range
+        let created_size = self.pop();
+        (key_range, created_size)
     }
 
     // Prerequisite: we have enough input in the window
     //
     // On return None, the caller should feed more data and call again
-    fn choose_next_delta(&mut self, target_size: u64, has_more: bool) -> Option<Range<K>> {
+    fn choose_next_delta(&mut self, target_size: u64, has_more: bool) -> Option<(Range<K>, u64)> {
         if has_more && self.elems.is_empty() {
             // Starting up
             return None;
