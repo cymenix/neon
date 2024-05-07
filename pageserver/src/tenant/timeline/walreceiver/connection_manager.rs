@@ -609,7 +609,7 @@ impl ConnectionManagerState {
     fn register_timeline_update(&mut self, timeline_update: SafekeeperTimelineInfo) {
         WALRECEIVER_BROKER_UPDATES.inc();
 
-        info!(
+        trace!(
             "Safekeeper info update: standby_horizon(cutoff)={}",
             timeline_update.standby_horizon
         );
