@@ -53,7 +53,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{
     array,
     collections::{BTreeMap, HashMap, HashSet},
-    sync::atomic::AtomicU64,
+    sync::atomic::{AtomicU64, AtomicUsize},
 };
 use std::{
     cmp::{max, min, Ordering},
@@ -409,6 +409,9 @@ pub struct Timeline {
 
     /// Keep aux directory cache to avoid it's reconstruction on each update
     pub(crate) aux_files: tokio::sync::Mutex<AuxFilesState>,
+
+    /// Indicate whether aux file v2 storage is enabled.
+    pub(crate) last_aux_file_policy: AtomicUsize,
 }
 
 pub struct WalReceiverInfo {
@@ -2257,6 +2260,8 @@ impl Timeline {
                     dir: None,
                     n_deltas: 0,
                 }),
+
+                last_aux_file_policy: AtomicUsize::new(AuxFilePolicy::opt_to_int(None)),
             };
             result.repartition_threshold =
                 result.get_checkpoint_distance() / REPARTITION_FREQ_IN_CHECKPOINT_DISTANCE;
@@ -2405,6 +2410,13 @@ impl Timeline {
         let generation = self.generation;
         let shard = self.get_shard_index();
         let this = self.myself.upgrade().expect("&self method holds the arc");
+
+        if let Some(ref index_part) = index_part {
+            self.last_aux_file_policy.store(
+                AuxFilePolicy::opt_to_int(index_part.metadata.last_aux_file_policy()),
+                AtomicOrdering::SeqCst,
+            );
+        }
 
         let (loaded_layers, needs_cleanup, total_physical_size) = tokio::task::spawn_blocking({
             move || {
@@ -3937,6 +3949,7 @@ impl Timeline {
             disk_consistent_lsn,
             ondisk_prev_record_lsn,
             *self.latest_gc_cutoff_lsn.read(),
+            AuxFilePolicy::int_to_opt(self.last_aux_file_policy.load(AtomicOrdering::SeqCst)),
         );
 
         fail_point!("checkpoint-before-saving-metadata", |x| bail!(

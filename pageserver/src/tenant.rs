@@ -20,6 +20,7 @@ use futures::stream::FuturesUnordered;
 use futures::FutureExt;
 use futures::StreamExt;
 use pageserver_api::models;
+use pageserver_api::models::AuxFilePolicy;
 use pageserver_api::models::TimelineState;
 use pageserver_api::models::WalRedoManagerStatus;
 use pageserver_api::shard::ShardIdentity;
@@ -1353,6 +1354,7 @@ impl Tenant {
             initdb_lsn,
             initdb_lsn,
             pg_version,
+            None,
         );
         self.prepare_new_timeline(
             new_timeline_id,
@@ -3100,6 +3102,7 @@ impl Tenant {
             *src_timeline.latest_gc_cutoff_lsn.read(), // FIXME: should we hold onto this guard longer?
             src_timeline.initdb_lsn,
             src_timeline.pg_version,
+            AuxFilePolicy::int_to_opt(src_timeline.last_aux_file_policy.load(Ordering::SeqCst)),
         );
 
         let uninitialized_timeline = self
@@ -3303,6 +3306,7 @@ impl Tenant {
             pgdata_lsn,
             pgdata_lsn,
             pg_version,
+            None,
         );
         let raw_timeline = self
             .prepare_new_timeline(

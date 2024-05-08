@@ -9,6 +9,7 @@
 //! [`remote_timeline_client`]: super::remote_timeline_client
 
 use anyhow::ensure;
+use pageserver_api::models::AuxFilePolicy;
 use serde::{de::Error, Deserialize, Serialize, Serializer};
 use utils::bin_ser::SerializeError;
 use utils::{bin_ser::BeSer, id::TimelineId, lsn::Lsn};
@@ -56,6 +57,7 @@ struct TimelineMetadataBodyV3 {
     latest_gc_cutoff_lsn: Lsn,
     initdb_lsn: Lsn,
     pg_version: u32,
+    last_aux_file_policy: Option<AuxFilePolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +102,7 @@ struct TimelineMetadataBodyV1 {
 }
 
 impl TimelineMetadata {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         disk_consistent_lsn: Lsn,
         prev_record_lsn: Option<Lsn>,
@@ -108,6 +111,7 @@ impl TimelineMetadata {
         latest_gc_cutoff_lsn: Lsn,
         initdb_lsn: Lsn,
         pg_version: u32,
+        last_aux_file_policy: Option<AuxFilePolicy>,
     ) -> Self {
         Self {
             hdr: TimelineMetadataHeader {
@@ -123,6 +127,7 @@ impl TimelineMetadata {
                 latest_gc_cutoff_lsn,
                 initdb_lsn,
                 pg_version,
+                last_aux_file_policy,
             },
         }
     }
@@ -146,6 +151,7 @@ impl TimelineMetadata {
                     latest_gc_cutoff_lsn: body.latest_gc_cutoff_lsn,
                     initdb_lsn: body.initdb_lsn,
                     pg_version: body.pg_version,
+                    last_aux_file_policy: None,
                 };
 
                 hdr.format_version = METADATA_FORMAT_VERSION;
@@ -165,6 +171,7 @@ impl TimelineMetadata {
                     latest_gc_cutoff_lsn: body.latest_gc_cutoff_lsn,
                     initdb_lsn: body.initdb_lsn,
                     pg_version: 14, // All timelines created before this version had pg_version 14
+                    last_aux_file_policy: None,
                 };
 
                 hdr.format_version = METADATA_FORMAT_VERSION;
@@ -266,6 +273,10 @@ impl TimelineMetadata {
         self.body.pg_version
     }
 
+    pub fn last_aux_file_policy(&self) -> Option<AuxFilePolicy> {
+        self.body.last_aux_file_policy
+    }
+
     // Checksums make it awkward to build a valid instance by hand.  This helper
     // provides a TimelineMetadata with a valid checksum in its header.
     #[cfg(test)]
@@ -278,6 +289,7 @@ impl TimelineMetadata {
             Lsn::from_hex("00000000").unwrap(),
             Lsn::from_hex("00000000").unwrap(),
             0,
+            None,
         );
         let bytes = instance.to_bytes().unwrap();
         Self::from_bytes(&bytes).unwrap()
@@ -287,6 +299,7 @@ impl TimelineMetadata {
         self.body.disk_consistent_lsn = update.disk_consistent_lsn;
         self.body.prev_record_lsn = update.prev_record_lsn;
         self.body.latest_gc_cutoff_lsn = update.latest_gc_cutoff_lsn;
+        self.body.last_aux_file_policy = update.last_aux_file_policy;
     }
 }
 
@@ -317,6 +330,7 @@ pub(crate) struct MetadataUpdate {
     disk_consistent_lsn: Lsn,
     prev_record_lsn: Option<Lsn>,
     latest_gc_cutoff_lsn: Lsn,
+    last_aux_file_policy: Option<AuxFilePolicy>,
 }
 
 impl MetadataUpdate {
@@ -324,11 +338,13 @@ impl MetadataUpdate {
         disk_consistent_lsn: Lsn,
         prev_record_lsn: Option<Lsn>,
         latest_gc_cutoff_lsn: Lsn,
+        last_aux_file_policy: Option<AuxFilePolicy>,
     ) -> Self {
         Self {
             disk_consistent_lsn,
             prev_record_lsn,
             latest_gc_cutoff_lsn,
+            last_aux_file_policy,
         }
     }
 }
@@ -352,6 +368,7 @@ mod tests {
             Lsn(0),
             // Any version will do here, so use the default
             crate::DEFAULT_PG_VERSION,
+            Some(AuxFilePolicy::V2),
         );
 
         let metadata_bytes = original_metadata
@@ -426,6 +443,7 @@ mod tests {
             Lsn(0),
             Lsn(0),
             14, // All timelines created before this version had pg_version 14
+            None,
         );
 
         assert_eq!(
@@ -495,6 +513,7 @@ mod tests {
             Lsn(0),
             Lsn(0),
             16,
+            None,
         );
 
         assert_eq!(
@@ -520,6 +539,7 @@ mod tests {
                 latest_gc_cutoff_lsn: Lsn(0),
                 initdb_lsn: Lsn(0),
                 pg_version: 16,
+                last_aux_file_policy: Some(AuxFilePolicy::V2),
             },
         };
 
@@ -539,6 +559,7 @@ mod tests {
             Lsn(0),
             Lsn(0),
             16,
+            Some(AuxFilePolicy::V2),
         );
 
         assert_eq!(deserialized_metadata.body, expected_metadata.body);

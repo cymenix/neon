@@ -14,6 +14,7 @@ use hyper::header;
 use hyper::StatusCode;
 use hyper::{Body, Request, Response, Uri};
 use metrics::launch_timestamp::LaunchTimestamp;
+use pageserver_api::models::AuxFilePolicy;
 use pageserver_api::models::LocationConfig;
 use pageserver_api::models::LocationConfigListResponse;
 use pageserver_api::models::ShardParameters;
@@ -433,6 +434,12 @@ async fn build_timeline_info_common(
         state,
 
         walreceiver_status,
+
+        last_aux_file_policy: AuxFilePolicy::int_to_opt(
+            timeline
+                .last_aux_file_policy
+                .load(std::sync::atomic::Ordering::SeqCst),
+        ),
     };
     Ok(info)
 }

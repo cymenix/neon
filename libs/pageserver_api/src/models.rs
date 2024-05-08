@@ -315,6 +315,27 @@ pub enum AuxFilePolicy {
     CrossValidation,
 }
 
+impl AuxFilePolicy {
+    pub fn opt_to_int(this: Option<Self>) -> usize {
+        match this {
+            Some(AuxFilePolicy::V1) => 1,
+            Some(AuxFilePolicy::V2) => 2,
+            Some(AuxFilePolicy::CrossValidation) => 255,
+            None => 0,
+        }
+    }
+
+    pub fn int_to_opt(this: usize) -> Option<Self> {
+        match this {
+            1 => Some(AuxFilePolicy::V1),
+            2 => Some(AuxFilePolicy::V2),
+            255 => Some(AuxFilePolicy::CrossValidation),
+            0 => None,
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl FromStr for AuxFilePolicy {
     type Err = anyhow::Error;
 
@@ -604,6 +625,9 @@ pub struct TimelineInfo {
     pub state: TimelineState,
 
     pub walreceiver_status: String,
+
+    /// Whether aux file v2 is enabled
+    pub last_aux_file_policy: Option<AuxFilePolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

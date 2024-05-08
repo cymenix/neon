@@ -35,7 +35,7 @@ use std::ops::ControlFlow;
 use std::ops::Range;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 use utils::bin_ser::DeserializeError;
 use utils::vec_map::{VecMap, VecMapOrdering};
 use utils::{bin_ser::BeSer, lsn::Lsn};
@@ -1465,7 +1465,30 @@ impl<'a> DatadirModification<'a> {
         content: &[u8],
         ctx: &RequestContext,
     ) -> anyhow::Result<()> {
-        let policy = self.tline.get_switch_aux_file_policy();
+        let switch_policy = self.tline.get_switch_aux_file_policy();
+
+        let policy = {
+            let current_policy = AuxFilePolicy::int_to_opt(
+                self.tline
+                    .last_aux_file_policy
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            );
+            // Allowed switch path:
+            // * no aux files -> v1/v2/cross-validation
+            // * cross-validation->v2
+            match (current_policy, switch_policy) {
+                (None, _) | (Some(AuxFilePolicy::CrossValidation), AuxFilePolicy::V2) => {
+                    self.tline.last_aux_file_policy.store(
+                        AuxFilePolicy::opt_to_int(Some(switch_policy)),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                    info!("switching to aux file policy {:?}", switch_policy);
+                    switch_policy
+                }
+                (Some(current_policy), _) => current_policy,
+            }
+        };
+
         if let AuxFilePolicy::V2 | AuxFilePolicy::CrossValidation = policy {
             let key = aux_file::encode_aux_file_key(path);
             // retrieve the key from the engine
