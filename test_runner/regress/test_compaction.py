@@ -79,12 +79,16 @@ page_cache_size=10
 
     non_vectored_sum = metrics.query_one("pageserver_layers_visited_per_read_global_sum")
     non_vectored_count = metrics.query_one("pageserver_layers_visited_per_read_global_count")
-    non_vectored_average = non_vectored_sum.value / non_vectored_count.value
-
+    if non_vectored_count.value != 0:
+        non_vectored_average = non_vectored_sum.value / non_vectored_count.value
+    else:
+        non_vectored_average = 0
     vectored_sum = metrics.query_one("pageserver_layers_visited_per_vectored_read_global_sum")
     vectored_count = metrics.query_one("pageserver_layers_visited_per_vectored_read_global_count")
-    vectored_average = vectored_sum.value / vectored_count.value
-
+    if vectored_count.value != 0:
+        vectored_average = vectored_sum.value / vectored_count.value
+    else:
+        vectored_average = 0
     log.info(f"{non_vectored_average=} {vectored_average=}")
 
     # The upper bound for average number of layer visits below (8)
