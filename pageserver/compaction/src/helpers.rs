@@ -7,7 +7,6 @@ use futures::{Stream, StreamExt};
 use itertools::Itertools;
 use pageserver_api::shard::ShardIdentity;
 use pin_project_lite::pin_project;
-use utils::lsn::Lsn;
 use std::collections::BinaryHeap;
 use std::collections::VecDeque;
 use std::fmt::Display;
@@ -15,6 +14,7 @@ use std::future::Future;
 use std::ops::{DerefMut, Range};
 use std::pin::Pin;
 use std::task::{ready, Poll};
+use utils::lsn::Lsn;
 
 pub fn keyspace_total_size<K>(
     keyspace: &CompactionKeySpace<K>,
@@ -216,7 +216,10 @@ pub struct KeySize<K> {
     pub partition_lsns: Vec<(Lsn, u64)>,
 }
 
-pub fn accum_key_values<'a, I, K, D, E>(input: I, target_size: u64) -> impl Stream<Item = Result<KeySize<K>, E>>
+pub fn accum_key_values<'a, I, K, D, E>(
+    input: I,
+    target_size: u64,
+) -> impl Stream<Item = Result<KeySize<K>, E>>
 where
     K: Eq + PartialOrd + Display + Copy,
     I: Stream<Item = Result<D, E>>,

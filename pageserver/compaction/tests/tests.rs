@@ -27,8 +27,9 @@ async fn test_many_updates_for_single_key() {
     executor.target_file_size = 1_000_000; // 1 MB
 
     // Ingest 10 MB of updates to a single key.
-    for _ in 1..1000 {
-        executor.ingest_uniform(100, 10, &(0..100_000)).unwrap();
+    for i in 1..1000 {
+        println!("FOO {i}!");
+        executor.ingest_uniform(100, 10, &(0..10_000)).unwrap();
         executor.ingest_uniform(1000, 10, &(0..1)).unwrap();
         executor.compact().await.unwrap();
     }

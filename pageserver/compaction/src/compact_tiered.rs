@@ -44,6 +44,7 @@ pub async fn compact_tiered<E: CompactionJobExecutor>(
     fanout: u64,
     ctx: &E::RequestContext,
 ) -> anyhow::Result<()> {
+    println!("compaction entry point");
     assert!(fanout >= 1, "fanout needs to be at least 1 but is {fanout}");
     let exp_base = fanout.max(2);
     // Start at L0
@@ -120,6 +121,7 @@ async fn compact_level<E: CompactionJobExecutor>(
     target_file_size: u64,
     ctx: &E::RequestContext,
 ) -> anyhow::Result<bool> {
+    println!("compact_level");
     let mut layer_fragments = Vec::new();
     for l in layers {
         layer_fragments.push(LayerFragment::new(l.clone()));
@@ -280,6 +282,7 @@ where
         // TODO: this would be pretty straightforward to parallelize with FuturesUnordered
         while let Some(next_job_id) = self.job_queue.pop() {
             info!("executing job {}", next_job_id.0);
+            //println!("execute_job: {}", next_job_id.0);
             self.execute_job(next_job_id, ctx).await?;
         }
 
@@ -513,6 +516,10 @@ where
         ctx: &E::RequestContext,
     ) -> anyhow::Result<()> {
         let job = &self.jobs[job_id.0];
+        //println!("retile_deltas: {}-{}__{}-{}.", job.key_range.start, job.key_range.end, job.lsn_range.start, job.lsn_range.end);
+        if job.key_range.start.next() == job.key_range.end {
+            println!("In single-key compaction job now.");
+        }
         assert!(job.strategy == CompactionStrategy::Divide);
 
         // Sweep the key space left to right, running an estimate of how much
@@ -521,8 +528,6 @@ where
         // Once the disk size reaches the target threshold, stop and think.
         // If we have accumulated only a narrow band of keyspace, create an
         // image layer. Otherwise write a delta layer.
-
-        // FIXME: deal with the case of lots of values for same key
 
         // FIXME: we are ignoring images here. Did we already divide the work
         // so that we won't encounter them here?
@@ -545,7 +550,7 @@ where
         let mut window = Window::new();
 
         let drain_window = |window: &mut Window<_>, new_jobs: &mut Vec<_>, has_more: bool| {
-            while let Some((key_range, _file_size)) =
+            if let Some((key_range, _file_size)) =
                 window.choose_next_delta(self.target_file_size, has_more)
             {
                 let batch_layers: Vec<LayerId> = job
@@ -564,70 +569,78 @@ where
                     input_layers: batch_layers,
                     completed: false,
                 });
+                true
+            } else {
+                false
             }
         };
-        loop {
-            if all_in_window && window.elems.is_empty() {
+        'outer: loop {
+            if all_in_window && window.is_empty() {
                 // All done!
                 break;
             }
-            drain_window(&mut window, &mut new_jobs, !all_in_window);
+            if drain_window(&mut window, &mut new_jobs, !all_in_window) {
+                continue;
+            }
             assert!(!all_in_window);
-            if let Some(next_key) = key_accum.next().await.transpose()? {
+            while let Some(next_key) = key_accum.next().await.transpose()? {
                 if next_key.partition_lsns.is_empty() {
                     // Normal case: extend the window by the key
                     window.feed(next_key.key, next_key.size);
-                } else {
-                    // We have a key with too large size impact for a single delta layer.
-                    // Therefore, drain window with has_more = false to make a clean cut
-                    // before the key, and then make dedicated delta layers for the
-                    // single key.
-                    // We cannot cluster the key with the others, because
-                    // layer files are not allowed to overlap with each other in
-                    // the lsn,key space (no overlaps allowed for the rectangles).
-                    let key = next_key.key;
-                    if !window.is_empty() {
-                        let has_more = false;
-                        drain_window(&mut window, &mut new_jobs, has_more);
-                    }
-                    assert!(window.is_empty());
-
-                    // Not really required: but here for future resilience:
-                    // We make a "gap" here, so any structure the window holds should
-                    // probably be reset.
-                    window = Window::new();
-
-                    let mut prior_lsn = job.lsn_range.start;
-                    let mut lsn_ranges = Vec::new();
-                    for (lsn, _size) in next_key.partition_lsns {
-                        lsn_ranges.push(prior_lsn..lsn);
-                        prior_lsn = lsn;
-                    }
-                    lsn_ranges.push(prior_lsn..job.lsn_range.end);
-                    for lsn_range in lsn_ranges {
-                        let key_range = key..key.next();
-                        let batch_layers: Vec<LayerId> = job
-                            .input_layers
-                            .iter()
-                            .filter(|layer_id| {
-                                let layer = &self.layers[layer_id.0].layer;
-                                layer.key_range().contains(&key)
-                                    && overlaps_with(layer.lsn_range(), &lsn_range)
-                            })
-                            .cloned()
-                            .collect();
-                        new_jobs.push(CompactionJob {
-                            key_range,
-                            lsn_range: job.lsn_range.clone(),
-                            strategy: CompactionStrategy::CreateDelta,
-                            input_layers: batch_layers,
-                            completed: false,
-                        });
-                    }
+                    continue 'outer;
                 }
-            } else {
-                all_in_window = true;
+                // We have a key with too large size impact for a single delta layer.
+                // Therefore, drain window with has_more = false to make a clean cut
+                // before the key, and then make dedicated delta layers for the
+                // single key.
+                // We cannot cluster the key with the others, because
+                // layer files are not allowed to overlap with each other in
+                // the lsn,key space (no overlaps allowed for the rectangles).
+                let key = next_key.key;
+                //println!("key {key} with too large size impact");
+                if !window.is_empty() {
+                    let has_more = false;
+                    println!("  -> inner drain_window");
+                    drain_window(&mut window, &mut new_jobs, has_more);
+                }
+                assert!(window.is_empty());
+
+                // Not really required: but here for future resilience:
+                // We make a "gap" here, so any structure the window holds should
+                // probably be reset.
+                window = Window::new();
+
+                let mut prior_lsn = job.lsn_range.start;
+                let mut lsn_ranges = Vec::new();
+                for (lsn, _size) in next_key.partition_lsns.iter() {
+                    lsn_ranges.push(prior_lsn..*lsn);
+                    prior_lsn = *lsn;
+                }
+                lsn_ranges.push(prior_lsn..job.lsn_range.end);
+                for lsn_range in lsn_ranges {
+                    let key_range = key..key.next();
+                    let batch_layers: Vec<LayerId> = job
+                        .input_layers
+                        .iter()
+                        .filter(|layer_id| {
+                            let layer = &self.layers[layer_id.0].layer;
+                            layer.key_range().contains(&key)
+                                && overlaps_with(layer.lsn_range(), &lsn_range)
+                        })
+                        .cloned()
+                        .collect();
+                    //println!("  pushed compaction job {}-{}__{}-{}", key_range.start, key_range.end, lsn_range.start, lsn_range.end);
+                    new_jobs.push(CompactionJob {
+                        key_range,
+                        lsn_range: lsn_range,
+                        strategy: CompactionStrategy::CreateDelta,
+                        input_layers: batch_layers,
+                        completed: false,
+                    });
+                }
+                //println!("Added new compaction jobs");
             }
+            all_in_window = true;
         }
 
         // All the input files are rewritten. Set up the tracking for when they can
