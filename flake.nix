@@ -17,27 +17,12 @@
         };
       };
     };
-    pg14 = {
-      url = "github:neondatabase/postgres/REL_14_STABLE_neon";
-      flake = false;
-    };
-    pg15 = {
-      url = "github:neondatabase/postgres/REL_15_STABLE_neon";
-      flake = false;
-    };
-    pg16 = {
-      url = "github:neondatabase/postgres/REL_16_STABLE_neon";
-      flake = false;
-    };
   };
   outputs = {
     self,
     nixpkgs,
     flake-utils,
     rust-overlay,
-    pg14,
-    pg15,
-    pg16,
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
@@ -78,6 +63,7 @@
       in
         with pkgs; {
           packages = {
+            # build with nix build '.?submodules=1'
             default = rustPlatform.buildRustPackage {
               inherit buildInputs nativeBuildInputs;
               name = "neondb";
@@ -96,14 +82,8 @@
               };
 
               postPatch = ''
-                mkdir -p vendor/postgres-v14
-                mkdir -p vendor/postgres-v15
-                mkdir -p vendor/postgres-v16
-
-                cp -r ${pg14}/* ./vendor/postgres-v14/
-                cp -r ${pg15}/* ./vendor/postgres-v15/
-                cp -r ${pg16}/* ./vendor/postgres-v16/
-
+                # Gets rid of git errors, however postgres binaries will not have 
+                # the neon postgres fork commit hash appended to the postgres version number string
                 substituteInPlace ./Makefile \
                   --replace-fail "&& git rev-parse HEAD" ""
 
@@ -129,19 +109,13 @@
                   --replace-fail /bin/pwd ${pkgs.coreutils}/bin/pwd
               '';
 
-              updateAutotoolsGnuConfigScriptsPhase = ''
-                echo "Stubbed"
-              '';
-
               BUILD_TYPE = "release";
 
               CARGO_BUILD_FLAGS = "--features=testing";
 
               buildPhase = ''
-                make -j`nproc` -s postgres-v16 neon-pg-ext-v16
                 export PQ_LIB_DIR="$(pwd)/pg_install/v16/lib";
-                export LD_LIBRARY_PATH="$PQ_LIB_DIR:$LD_LIBRARY_PATH"
-                make -j`nproc` -s neon
+                make -j`nproc` -s
               '';
 
               installPhase = ''
@@ -176,6 +150,10 @@
               ];
             RUST_BACKTRACE = 1;
             RUST_SRC_PATH = "${rust.packages.stable.rustPlatform.rustLibSrc}";
+            shellHook = ''
+              export PQ_LIB_DIR="$(pwd)/pg_install/v16/lib";
+              export LD_LIBRARY_PATH="$PQ_LIB_DIR:$LD_LIBRARY_PATH"
+            '';
           };
         }
     );
