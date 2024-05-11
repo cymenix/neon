@@ -123,19 +123,7 @@
                 cp -r pg_install/* $out/pg_install/
                 ln -s $out/pg_install/v16/lib $out/lib
                 ln -s $out/pg_install/v16/bin/* $out/bin/
-                cp target/release/neon_local $out/bin
-                cp target/release/safekeeper $out/bin
-                cp target/release/pageserver $out/bin
-                cp target/release/storage_broker $out/bin
-                cp target/release/storage_controller $out/bin
-                cp target/release/proxy $out/bin
-                cp target/release/pagectl $out/bin
-                cp target/release/compute_ctl $out/bin
-                cp target/release/storcon_cli $out/bin
-                cp target/release/pagebench $out/bin
-                cp target/release/trace $out/bin
-                cp target/release/vm-monitor $out/bin
-                cp target/release/wal_craft $out/bin
+                cp --target-directory=$out/bin target/release/{neon_local,safekeeper,pageserver,storage_broker,storage_controller,proxy,pagectl,compute_ctl}
               '';
 
               doCheck = false;
