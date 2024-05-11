@@ -82,7 +82,7 @@
               };
 
               postPatch = ''
-                # Gets rid of git errors, however postgres binaries will not have 
+                # Gets rid of git errors, however postgres binaries will not have
                 # the neon postgres fork commit hash appended to the postgres version number string
                 substituteInPlace ./Makefile \
                   --replace-fail "&& git rev-parse HEAD" ""
@@ -121,6 +121,8 @@
               installPhase = ''
                 mkdir -p $out/bin $out/pg_install
                 cp -r pg_install/* $out/pg_install/
+                ln -s $out/pg_install/v16/lib $out/lib
+                ln -s $out/pg_install/v16/bin/* $out/bin/
                 cp target/release/neon_local $out/bin
                 cp target/release/safekeeper $out/bin
                 cp target/release/pageserver $out/bin
