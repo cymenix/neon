@@ -17,12 +17,27 @@
         };
       };
     };
+    pg14 = {
+      url = "github:neondatabase/postgres/REL_14_STABLE_neon";
+      flake = false;
+    };
+    pg15 = {
+      url = "github:neondatabase/postgres/REL_15_STABLE_neon";
+      flake = false;
+    };
+    pg16 = {
+      url = "github:neondatabase/postgres/REL_16_STABLE_neon";
+      flake = false;
+    };
   };
   outputs = {
     self,
     nixpkgs,
     flake-utils,
     rust-overlay,
+    pg14,
+    pg15,
+    pg16,
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
@@ -58,6 +73,7 @@
           perl
           protobuf
           rustPlatform.bindgenHook
+          rustToolchain
         ];
       in
         with pkgs; {
@@ -80,7 +96,14 @@
               };
 
               postPatch = ''
-                mkdir -p pg_install pg_install/build
+                mkdir -p vendor/postgres-v14
+                mkdir -p vendor/postgres-v15
+                mkdir -p vendor/postgres-v16
+
+                cp -r ${pg14}/* ./vendor/postgres-v14/
+                cp -r ${pg15}/* ./vendor/postgres-v15/
+                cp -r ${pg16}/* ./vendor/postgres-v16/
+
                 substituteInPlace ./Makefile \
                   --replace-fail "&& git rev-parse HEAD" ""
 
@@ -104,6 +127,10 @@
 
                 substituteInPlace ./vendor/postgres-v16/configure.ac \
                   --replace-fail /bin/pwd ${pkgs.coreutils}/bin/pwd
+              '';
+
+              updateAutotoolsGnuConfigScriptsPhase = ''
+                echo "Stubbed"
               '';
 
               BUILD_TYPE = "release";

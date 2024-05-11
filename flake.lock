@@ -34,10 +34,64 @@
         "type": "github"
       }
     },
+    "pg14": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1714643479,
+        "narHash": "sha256-ACDNneYrb59OnZ1vP3mYaOwHgeGB2E3Ke/jU2/3i9dY=",
+        "owner": "neondatabase",
+        "repo": "postgres",
+        "rev": "d6f7e2c604bfc7cbc4c46bcea0a8e800f4bc778a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "neondatabase",
+        "ref": "REL_14_STABLE_neon",
+        "repo": "postgres",
+        "type": "github"
+      }
+    },
+    "pg15": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1714643490,
+        "narHash": "sha256-fUuHuH/wCM5pBTQbdXq+4D34fs/9KxEzEAq2oj/bFJo=",
+        "owner": "neondatabase",
+        "repo": "postgres",
+        "rev": "f0d6b0ef7581bd78011832e23d8420a7d2c8a83a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "neondatabase",
+        "ref": "REL_15_STABLE_neon",
+        "repo": "postgres",
+        "type": "github"
+      }
+    },
+    "pg16": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1714643499,
+        "narHash": "sha256-GpYc2clk2kpaLqS7nUW2PEJ/10Mov0VuczSGQv3Yfak=",
+        "owner": "neondatabase",
+        "repo": "postgres",
+        "rev": "8ef3c33aa01631e17cb24a122776349fcc777b46",
+        "type": "github"
+      },
+      "original": {
+        "owner": "neondatabase",
+        "ref": "REL_16_STABLE_neon",
+        "repo": "postgres",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
+        "pg14": "pg14",
+        "pg15": "pg15",
+        "pg16": "pg16",
         "rust-overlay": "rust-overlay"
       }
     },
